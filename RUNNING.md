@@ -7,6 +7,12 @@ Liv is **two programs**: the **bot** (Python, `bot.py`) and the **display** (Nex
 - **Python 3.11+**, **Node 18+**, **git**
 - To actually see/hear Liv: API keys + a **Simli `face_id`** (see "Why nothing shows" below)
 
+> **Windows note:** commands below use macOS/Linux syntax. On Windows:
+> - activate the venv with `.venv\Scripts\activate` (not `source .venv/bin/activate`);
+> - set options/flags by adding them to **`.env`** (e.g. `LOG_LEVEL=DEBUG`, `DISABLE_FACE=true`)
+>   rather than `VAR=value python bot.py` — that env-var prefix is Linux-only. (cmd uses
+>   `set VAR=value` on its own line; PowerShell uses `$env:VAR="value"`.) Using `.env` works everywhere.
+
 ---
 
 ## 1. Get the code onto your machine
