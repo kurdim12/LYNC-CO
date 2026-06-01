@@ -12,6 +12,8 @@ mic → Deepgram STT → LLM (Liv persona + 08 KB) → ElevenLabs TTS → Simli 
 ```
 
 ## Quickstart
+> 🏃 **Running it on your own machine (clone → localhost → push):** see **`RUNNING.md`**.
+
 ```bash
 # 1) Environment (Python 3.11+)
 uv venv .venv
