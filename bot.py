@@ -45,7 +45,6 @@ from pipecat.processors.aggregators.llm_response_universal import (
 )
 from pipecat.runner.types import RunnerArguments, SmallWebRTCRunnerArguments
 from pipecat.services.deepgram.stt import DeepgramSTTService
-from pipecat.services.elevenlabs.tts import ElevenLabsTTSService
 from pipecat.transports.base_transport import BaseTransport, TransportParams
 from pipecat.transports.smallwebrtc.connection import SmallWebRTCConnection
 from pipecat.transports.smallwebrtc.transport import SmallWebRTCTransport
@@ -125,23 +124,110 @@ def create_llm():
     raise ValueError(f"Unknown LLM_PROVIDER={provider!r} (use openai | anthropic | google)")
 
 
+_LLM_KEY = {
+    "openai": "OPENAI_API_KEY", "anthropic": "ANTHROPIC_API_KEY",
+    "google": "GEMINI_API_KEY", "gemini": "GEMINI_API_KEY",
+}
+# Required keys per TTS provider (so e.g. OpenAI-TTS users don't need an ElevenLabs key).
+_TTS_KEYS = {
+    "elevenlabs": ["ELEVENLABS_API_KEY", "ELEVENLABS_VOICE_ID"],
+    "openai": ["OPENAI_API_KEY"],
+    "cartesia": ["CARTESIA_API_KEY", "CARTESIA_VOICE_ID"],
+    "azure": ["AZURE_SPEECH_API_KEY", "AZURE_SPEECH_REGION"],
+}
+
+
+# ── TTS: voice engine A/B (DOCUMENTATION.md §4, §6.4) ──────────────────────────
+# Pick the voice with TTS_PROVIDER. Default ElevenLabs uses 'multilingual_v2' (far more
+# natural than the 'flash' speed model). Tips: OpenAI TTS reuses your OPENAI_API_KEY (no
+# extra account, steerable via instructions); Azure has authentic Jordanian voices
+# (ar-JO-*). Imports are lazy so a provider's extra is only needed if you select it.
+def create_tts():
+    provider = os.getenv("TTS_PROVIDER", "elevenlabs").lower()
+
+    if provider == "elevenlabs":
+        from pipecat.services.elevenlabs.tts import ElevenLabsTTSService
+
+        model = os.getenv("ELEVENLABS_MODEL", "eleven_multilingual_v2")
+        logger.info(f"TTS: ElevenLabs / {model}")
+        return ElevenLabsTTSService(
+            api_key=os.getenv("ELEVENLABS_API_KEY"),
+            settings=ElevenLabsTTSService.Settings(
+                voice=os.getenv("ELEVENLABS_VOICE_ID"),
+                model=model,
+                stability=float(os.getenv("ELEVENLABS_STABILITY", "0.35")),
+                style=float(os.getenv("ELEVENLABS_STYLE", "0.65")),
+                use_speaker_boost=True,
+            ),
+        )
+
+    if provider == "openai":
+        from pipecat.services.openai.tts import OpenAITTSService
+
+        voice, model = os.getenv("OPENAI_TTS_VOICE", "coral"), os.getenv("OPENAI_TTS_MODEL", "gpt-4o-mini-tts")
+        logger.info(f"TTS: OpenAI / {model} / {voice}")
+        return OpenAITTSService(
+            api_key=os.getenv("OPENAI_API_KEY"),
+            settings=OpenAITTSService.Settings(
+                voice=voice,
+                model=model,
+                instructions=os.getenv(
+                    "OPENAI_TTS_INSTRUCTIONS",
+                    "Warm, upbeat and natural — a cool, design-led brand host. Never robotic.",
+                ),
+            ),
+        )
+
+    if provider == "cartesia":
+        try:
+            from pipecat.services.cartesia.tts import CartesiaTTSService
+        except ImportError:
+            raise RuntimeError('Cartesia not installed. Run:  pip install "pipecat-ai[cartesia]"')
+        logger.info("TTS: Cartesia")
+        return CartesiaTTSService(
+            api_key=os.getenv("CARTESIA_API_KEY"),
+            settings=CartesiaTTSService.Settings(
+                voice=os.getenv("CARTESIA_VOICE_ID"),
+                model=os.getenv("CARTESIA_MODEL", "sonic-2"),
+            ),
+        )
+
+    if provider == "azure":
+        try:
+            from pipecat.services.azure.tts import AzureTTSService
+        except ImportError:
+            raise RuntimeError('Azure not installed. Run:  pip install "pipecat-ai[azure]"')
+        voice = os.getenv("AZURE_TTS_VOICE", "ar-JO-SanaNeural")  # authentic Jordanian
+        logger.info(f"TTS: Azure / {voice}")
+        return AzureTTSService(
+            api_key=os.getenv("AZURE_SPEECH_API_KEY"),
+            region=os.getenv("AZURE_SPEECH_REGION"),
+            settings=AzureTTSService.Settings(voice=voice),
+        )
+
+    raise ValueError(f"Unknown TTS_PROVIDER={provider!r} (use elevenlabs | openai | cartesia | azure)")
+
+
 # ── Startup readiness (helps debug "nothing happens") ─────────────────────────
 def _log_env_readiness() -> list[str]:
-    """Log which keys are present (never the values); return the list of MISSING required keys."""
-    provider = os.getenv("LLM_PROVIDER", "openai").lower()
-    llm_key = {
-        "openai": "OPENAI_API_KEY",
-        "anthropic": "ANTHROPIC_API_KEY",
-        "google": "GEMINI_API_KEY",
-        "gemini": "GEMINI_API_KEY",
-    }.get(provider, "OPENAI_API_KEY")
+    """Log which keys are present (never values); return MISSING required keys for the chosen providers."""
+    llm = os.getenv("LLM_PROVIDER", "openai").lower()
+    llm_key = _LLM_KEY.get(llm, "OPENAI_API_KEY")
+    tts = os.getenv("TTS_PROVIDER", "elevenlabs").lower()
+    tts_keys = _TTS_KEYS.get(tts, _TTS_KEYS["elevenlabs"])
+
     mark = lambda n: "set" if os.getenv(n) else "MISSING"  # noqa: E731
     logger.info(
-        f"Keys → DEEPGRAM:{mark('DEEPGRAM_API_KEY')}  {provider}:{mark(llm_key)}  "
-        f"ELEVENLABS:{mark('ELEVENLABS_API_KEY')}  VOICE_ID:{mark('ELEVENLABS_VOICE_ID')}  "
-        f"SIMLI:{mark('SIMLI_API_KEY')}  FACE_ID:{mark('SIMLI_FACE_ID')}"
+        f"Providers → LLM:{llm}  TTS:{tts}  |  Keys → DEEPGRAM:{mark('DEEPGRAM_API_KEY')}  "
+        f"{llm_key}:{mark(llm_key)}  " + "  ".join(f"{k}:{mark(k)}" for k in tts_keys)
+        + f"  SIMLI:{mark('SIMLI_API_KEY')}  FACE_ID:{mark('SIMLI_FACE_ID')}"
     )
-    required = ["DEEPGRAM_API_KEY", llm_key, "ELEVENLABS_API_KEY", "ELEVENLABS_VOICE_ID"]
+    # De-dupe (OpenAI LLM + OpenAI TTS share one key).
+    required, seen = [], set()
+    for k in ["DEEPGRAM_API_KEY", llm_key, *tts_keys]:
+        if k not in seen:
+            seen.add(k)
+            required.append(k)
     return [n for n in required if not os.getenv(n)]
 
 
@@ -177,18 +263,8 @@ async def run_bot(transport: BaseTransport):
     # LLM — Liv's brain (provider chosen via env).
     llm = create_llm()
 
-    # TTS — ElevenLabs Flash v2.5 multilingual, tuned expressive (§6.4, §9, §20).
-    # Lower stability + some style = "into it", not flat. Tune in the spike.
-    tts = ElevenLabsTTSService(
-        api_key=os.getenv("ELEVENLABS_API_KEY"),
-        settings=ElevenLabsTTSService.Settings(
-            voice=os.getenv("ELEVENLABS_VOICE_ID"),
-            model=os.getenv("ELEVENLABS_MODEL", "eleven_flash_v2_5"),
-            stability=float(os.getenv("ELEVENLABS_STABILITY", "0.4")),
-            style=float(os.getenv("ELEVENLABS_STYLE", "0.6")),
-            use_speaker_boost=True,
-        ),
-    )
+    # TTS — voice engine chosen via TTS_PROVIDER (ElevenLabs default; see create_tts).
+    tts = create_tts()
 
     # Face — Simli (Trinity). MUST come after TTS so it lip-syncs the audio (§6.5, §20).
     # IMPORTANT: Simli sits between TTS and the output, so a missing/invalid SIMLI_FACE_ID
