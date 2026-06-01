@@ -58,5 +58,12 @@ prompts/liv_persona_v1.md  Liv's character (system prompt)
 knowledge/lynkco_08.md     The only source of car facts (KB template; brand-approved values TBC)
 requirements.txt  .env.example
 DOCUMENTATION.md  CLAUDE.md  BUILD_PLAN.md
-display/                   Next.js display + /operator (Phase 2)
+display/                   Next.js display + /operator — static export, Cloudflare Pages-ready
+deploy/                    Bot container (Dockerfile) + Pipecat Cloud config
+DEPLOY.md                  How to host the display (Cloudflare/Vercel) + the bot
 ```
+
+## Hosting
+The **display** (`display/`) is a static Next.js app → **Cloudflare Pages** (or Vercel). The
+**bot** (`bot.py`) is a persistent WebRTC + ML server → **Pipecat Cloud / a VM / the venue PC**
+(it can't run on serverless edge). Full manual deploy steps in **`DEPLOY.md`**.

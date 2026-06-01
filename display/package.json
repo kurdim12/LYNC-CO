@@ -1,0 +1,26 @@
+{
+  "name": "liv-display",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Liv — full-screen WebRTC display + operator dashboard (Cloudflare Pages, static export).",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "preview": "npx serve out",
+    "deploy:cf": "npx wrangler@latest pages deploy out --project-name=liv-display"
+  },
+  "dependencies": {
+    "@pipecat-ai/client-js": "^1.10.0",
+    "@pipecat-ai/client-react": "^1.6.0",
+    "@pipecat-ai/small-webrtc-transport": "^1.10.3",
+    "next": "^14.2.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@types/node": "^20",
+    "@types/react": "^18",
+    "@types/react-dom": "^18",
+    "typescript": "^5.4.0"
+  }
+}

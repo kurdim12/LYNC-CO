@@ -1,0 +1,13 @@
+# Pipecat Cloud deployment config (used by the `pipecatcloud` / `pcc` CLI).
+# Pipecat Cloud is the managed home for the bot (Cloudflare can't host it). See ../DEPLOY.md.
+#
+# Pipecat Cloud typically fronts bots with the Daily transport — to deploy there you'll add
+# the `daily` extra + Daily creds and handle DailyRunnerArguments in bot.py (a small addition;
+# the SmallWebRTC path stays for local/VM). Verify fields against current Pipecat Cloud docs.
+
+agent_name = "liv"
+secret_set = "liv-secrets"
+agent_profile = "agent-1x"
+
+[scaling]
+	min_agents = 1

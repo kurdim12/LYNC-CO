@@ -21,7 +21,8 @@ Pipeline (one streaming, overlapping loop):
 | `prompts/liv_persona_v1.md` | Liv's character (system prompt). Versioned. |
 | `knowledge/lynkco_08.md` | The ONLY source of car facts. Concatenated into context. |
 | `requirements.txt`, `.env.example` | Deps + keys. |
-| `display/` | Next.js display + `/operator` dashboard (Phase 2, not built yet). |
+| `display/` | Next.js display + `/operator` dashboard — static export, Cloudflare Pages-ready. |
+| `deploy/` | Bot container (`Dockerfile`) + Pipecat Cloud config. See `DEPLOY.md`. |
 | `BUILD_PLAN.md` | Phase-by-phase prompts. |
 
 ## Hard rules (do not break)
