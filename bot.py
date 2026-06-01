@@ -126,8 +126,8 @@ def create_llm():
 
 
 # ── Startup readiness (helps debug "nothing happens") ─────────────────────────
-def _log_env_readiness() -> None:
-    """Log which required keys are present (never the values). Empty key → that stage fails."""
+def _log_env_readiness() -> list[str]:
+    """Log which keys are present (never the values); return the list of MISSING required keys."""
     provider = os.getenv("LLM_PROVIDER", "openai").lower()
     llm_key = {
         "openai": "OPENAI_API_KEY",
@@ -141,15 +141,23 @@ def _log_env_readiness() -> None:
         f"ELEVENLABS:{mark('ELEVENLABS_API_KEY')}  VOICE_ID:{mark('ELEVENLABS_VOICE_ID')}  "
         f"SIMLI:{mark('SIMLI_API_KEY')}  FACE_ID:{mark('SIMLI_FACE_ID')}"
     )
-    for n in ("DEEPGRAM_API_KEY", llm_key, "ELEVENLABS_API_KEY", "ELEVENLABS_VOICE_ID"):
-        if not os.getenv(n):
-            logger.warning(f"{n} is MISSING — Liv can't speak until it's set in .env.")
+    required = ["DEEPGRAM_API_KEY", llm_key, "ELEVENLABS_API_KEY", "ELEVENLABS_VOICE_ID"]
+    return [n for n in required if not os.getenv(n)]
 
 
 # ── The pipeline (DOCUMENTATION.md §6.6) ───────────────────────────────────────
 async def run_bot(transport: BaseTransport):
     logger.info("Starting Liv …")
-    _log_env_readiness()
+    missing = _log_env_readiness()
+    if missing:
+        logger.error(
+            "✗ Missing required key(s) in .env: "
+            + ", ".join(missing)
+            + ".  Liv can't start. Put them in a file named exactly '.env' (same folder as "
+            "bot.py), one per line like  DEEPGRAM_API_KEY=xxxx  — then reconnect. "
+            "(Watch out: it must be '.env', not '.env.txt' or '.env.example'.)"
+        )
+        return
 
     # STT — Deepgram Nova-3, Levantine + EN code-switch (§6.2).
     # NOTE: confirm in the spike that Nova-3 'multi' actually covers Jordanian Arabic;
