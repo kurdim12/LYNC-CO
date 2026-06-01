@@ -34,6 +34,8 @@ from loguru import logger
 from pipecat.audio.vad.silero import SileroVADAnalyzer
 from pipecat.frames.frames import LLMRunFrame
 from pipecat.observers.loggers.metrics_log_observer import MetricsLogObserver
+from pipecat.observers.loggers.transcription_log_observer import TranscriptionLogObserver
+from pipecat.observers.loggers.llm_log_observer import LLMLogObserver
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.worker import PipelineParams, PipelineWorker
 from pipecat.processors.aggregators.llm_context import LLMContext
@@ -123,9 +125,31 @@ def create_llm():
     raise ValueError(f"Unknown LLM_PROVIDER={provider!r} (use openai | anthropic | google)")
 
 
+# ── Startup readiness (helps debug "nothing happens") ─────────────────────────
+def _log_env_readiness() -> None:
+    """Log which required keys are present (never the values). Empty key → that stage fails."""
+    provider = os.getenv("LLM_PROVIDER", "openai").lower()
+    llm_key = {
+        "openai": "OPENAI_API_KEY",
+        "anthropic": "ANTHROPIC_API_KEY",
+        "google": "GEMINI_API_KEY",
+        "gemini": "GEMINI_API_KEY",
+    }.get(provider, "OPENAI_API_KEY")
+    mark = lambda n: "set" if os.getenv(n) else "MISSING"  # noqa: E731
+    logger.info(
+        f"Keys → DEEPGRAM:{mark('DEEPGRAM_API_KEY')}  {provider}:{mark(llm_key)}  "
+        f"ELEVENLABS:{mark('ELEVENLABS_API_KEY')}  VOICE_ID:{mark('ELEVENLABS_VOICE_ID')}  "
+        f"SIMLI:{mark('SIMLI_API_KEY')}  FACE_ID:{mark('SIMLI_FACE_ID')}"
+    )
+    for n in ("DEEPGRAM_API_KEY", llm_key, "ELEVENLABS_API_KEY", "ELEVENLABS_VOICE_ID"):
+        if not os.getenv(n):
+            logger.warning(f"{n} is MISSING — Liv can't speak until it's set in .env.")
+
+
 # ── The pipeline (DOCUMENTATION.md §6.6) ───────────────────────────────────────
 async def run_bot(transport: BaseTransport):
     logger.info("Starting Liv …")
+    _log_env_readiness()
 
     # STT — Deepgram Nova-3, Levantine + EN code-switch (§6.2).
     # NOTE: confirm in the spike that Nova-3 'multi' actually covers Jordanian Arabic;
@@ -159,15 +183,28 @@ async def run_bot(transport: BaseTransport):
     )
 
     # Face — Simli (Trinity). MUST come after TTS so it lip-syncs the audio (§6.5, §20).
-    # Imported lazily so the rest of the pipeline can be smoke-tested without simli set up.
-    from pipecat.services.simli.video import SimliVideoService
+    # IMPORTANT: Simli sits between TTS and the output, so a missing/invalid SIMLI_FACE_ID
+    # blocks the AUDIO too → the classic "nothing happens". So we only add the face when it
+    # is actually configured (and DISABLE_FACE isn't set); otherwise Liv runs AUDIO-ONLY and
+    # you still hear her — which isolates whether the problem is the face or the pipeline.
+    video = None
+    if os.getenv("DISABLE_FACE", "").lower() in ("1", "true", "yes"):
+        logger.warning("DISABLE_FACE set → AUDIO-ONLY (no Simli face).")
+    elif os.getenv("SIMLI_API_KEY") and os.getenv("SIMLI_FACE_ID"):
+        from pipecat.services.simli.video import SimliVideoService
 
-    is_trinity = os.getenv("SIMLI_TRINITY", "true").lower() in ("1", "true", "yes")
-    video = SimliVideoService(
-        api_key=os.getenv("SIMLI_API_KEY"),
-        face_id=os.getenv("SIMLI_FACE_ID"),
-        is_trinity_avatar=is_trinity,
-    )
+        is_trinity = os.getenv("SIMLI_TRINITY", "true").lower() in ("1", "true", "yes")
+        video = SimliVideoService(
+            api_key=os.getenv("SIMLI_API_KEY"),
+            face_id=os.getenv("SIMLI_FACE_ID"),
+            is_trinity_avatar=is_trinity,
+        )
+        logger.info("Simli face enabled.")
+    else:
+        logger.warning(
+            "SIMLI_API_KEY/SIMLI_FACE_ID not set → AUDIO-ONLY (no face). Create a Simli face "
+            "and set SIMLI_FACE_ID to see Liv's face (Phase 1)."
+        )
 
     # Context: system message (persona + knowledge) seeds the conversation (§6.3).
     context = LLMContext(messages=[{"role": "system", "content": load_system_prompt()}])
@@ -178,25 +215,31 @@ async def run_bot(transport: BaseTransport):
     )
 
     # Streaming/overlapping loop: each stage feeds the next (§3, §6.6).
-    pipeline = Pipeline(
-        [
-            transport.input(),      # mic in (local WebRTC, VAD)
-            stt,                    # speech -> text
-            user_aggregator,        # add user turn to context
-            llm,                    # Liv thinks (streams tokens)
-            tts,                    # text -> expressive audio (starts on sentence 1)
-            video,                  # audio -> lip-synced face
-            transport.output(),     # video + audio out to the display
-            assistant_aggregator,   # add Liv's turn to context
-        ]
-    )
+    stages = [
+        transport.input(),      # mic in (local WebRTC, VAD)
+        stt,                    # speech -> text
+        user_aggregator,        # add user turn to context
+        llm,                    # Liv thinks (streams tokens)
+        tts,                    # text -> expressive audio (starts on sentence 1)
+    ]
+    if video is not None:
+        stages.append(video)    # audio -> lip-synced face
+    stages += [
+        transport.output(),     # video + audio out to the display
+        assistant_aggregator,   # add Liv's turn to context
+    ]
+    pipeline = Pipeline(stages)
 
     # Metrics give us per-stage TTFB; PipelineWorker also auto-attaches a
     # UserBotLatencyObserver for perceived end-to-end latency (§13, Phase 0 gate).
     worker = PipelineWorker(
         pipeline,
         params=PipelineParams(enable_metrics=True, enable_usage_metrics=True),
-        observers=[MetricsLogObserver()],
+        observers=[
+            TranscriptionLogObserver(),  # logs what Liv HEARS (STT) — see if your mic lands
+            LLMLogObserver(),            # logs what Liv THINKS/replies (LLM)
+            MetricsLogObserver(),        # per-stage latency / TTFB
+        ],
         # Release Simli minutes when nobody's talking (§6.5, §12, §15).
         idle_timeout_secs=float(os.getenv("IDLE_TIMEOUT_SECS", "300")),
     )
