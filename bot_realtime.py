@@ -82,15 +82,30 @@ async def run_bot(transport: BaseTransport):
     context = LLMContext()
     user_aggregator, assistant_aggregator = LLMContextAggregatorPair(context)
 
-    pipeline = Pipeline(
-        [
-            transport.input(),       # mic in
-            user_aggregator,
-            llm,                     # listens, thinks, AND speaks (one connection)
-            transport.output(),      # audio out
-            assistant_aggregator,
-        ]
-    )
+    # Optional FACE — Simli lip-syncs the realtime audio into a talking video of Liv.
+    # Set SIMLI_API_KEY + SIMLI_FACE_ID (see assets/liv_face_spec.md) to turn it on.
+    video = None
+    if (
+        os.getenv("SIMLI_API_KEY")
+        and os.getenv("SIMLI_FACE_ID")
+        and os.getenv("DISABLE_FACE", "").lower() not in ("1", "true", "yes")
+    ):
+        from pipecat.services.simli.video import SimliVideoService
+
+        video = SimliVideoService(
+            api_key=os.getenv("SIMLI_API_KEY"),
+            face_id=os.getenv("SIMLI_FACE_ID"),
+            is_trinity_avatar=os.getenv("SIMLI_TRINITY", "true").lower() in ("1", "true", "yes"),
+        )
+        logger.info("Simli FACE enabled — Liv will be a talking video.")
+    else:
+        logger.info("Audio-only (no face). Add SIMLI_API_KEY + SIMLI_FACE_ID for a talking face — see assets/liv_face_spec.md.")
+
+    stages = [transport.input(), user_aggregator, llm]
+    if video is not None:
+        stages.append(video)  # realtime audio -> lip-synced face (must be after the LLM)
+    stages += [transport.output(), assistant_aggregator]
+    pipeline = Pipeline(stages)
 
     worker = PipelineWorker(
         pipeline,
@@ -120,13 +135,22 @@ async def run_bot(transport: BaseTransport):
 
 
 async def bot(runner_args: RunnerArguments):
+    # Turn on live video output only when a Simli face is configured.
+    face_on = bool(os.getenv("SIMLI_API_KEY") and os.getenv("SIMLI_FACE_ID")) and os.getenv(
+        "DISABLE_FACE", ""
+    ).lower() not in ("1", "true", "yes")
+    params = TransportParams(
+        audio_in_enabled=True,
+        audio_out_enabled=True,
+        video_out_is_live=face_on,
+        video_out_width=int(os.getenv("VIDEO_OUT_WIDTH", "768")) if face_on else 1024,
+        video_out_height=int(os.getenv("VIDEO_OUT_HEIGHT", "1024")) if face_on else 768,
+    )
+
     match runner_args:
         case SmallWebRTCRunnerArguments():
             webrtc_connection: SmallWebRTCConnection = runner_args.webrtc_connection
-            transport = SmallWebRTCTransport(
-                webrtc_connection=webrtc_connection,
-                params=TransportParams(audio_in_enabled=True, audio_out_enabled=True),
-            )
+            transport = SmallWebRTCTransport(webrtc_connection=webrtc_connection, params=params)
         case _:
             logger.error(f"Unsupported runner arguments type: {type(runner_args)}")
             return
