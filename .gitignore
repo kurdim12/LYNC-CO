@@ -1,0 +1,36 @@
+# ── Secrets (never commit) ───────────────────────────────────────────────────
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+
+# ── Python ───────────────────────────────────────────────────────────────────
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# ── Node / Next.js (display app, Phase 2) ────────────────────────────────────
+node_modules/
+.next/
+out/
+dist/
+build/
+*.tsbuildinfo
+
+# ── Logs / runtime artifacts ─────────────────────────────────────────────────
+*.log
+logs/
+
+# ── Local assets that shouldn't be in git (large / licensed) ─────────────────
+# Keep the generated Liv face source out of the repo unless rights are settled (§18).
+assets/face_raw/
+
+# ── OS ───────────────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
